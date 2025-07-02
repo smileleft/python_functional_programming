@@ -43,28 +43,40 @@ def mock_order_data(count: int) -> List[Dict]:
     ]
 
 
-def sync_orders_advanced(orders: List[Dict], payments: List[Dict], shop_filter=None) -> List[Dict]:
-    
-    payments_filtered = (
-        list(filter(lambda p: p['shop_id'] == shop_filter, payments))
-        if shop_filter else payments
+def is_uncompleted(order: Dict) -> bool:
+    """Order completion filter"""
+    return not order["is_completed"]
+
+def create_payment_matcher(pay_ids: set):
+    """payment matching function"""
+    return lambda order: order["order_id"] in pay_ids
+
+def mark_completed(order: Dict) -> Dict:
+    """Update order status as completed"""
+    return {**order, "is_completed": True}
+
+def sync_orders_advanced_fp(orders: List[Dict], payments: List[Dict], shop_filter=None) -> List[Dict]:
+    # filtering and generate set of pay_id
+    pay_ids = pipe(
+        payments,
+        cfilter(lambda p: p["shop_id"] == shop_id),
+        cmap(lambda p: p["pay_id"]),
+        set
     )
 
-    pay_id_set = set(map(lambda p: p['pay_id'], payments_filtered))
-
-    
-    def needs_update(order):
-        return (not order['is_completed']) and (order['order_id'] in pay_id_set)
-
-    def update_order(order):
-        return {**order, "is_completed": True}
-
-    updated_orders = pipe(
-        orders,
-        lambda os: list(map(lambda o: update_order(o) if needs_update(o) else o, os))
+    needs_update = compose(
+        create_payment_matcher(pay_ids),
+        lambda o: o if is_uncompleted(o) else None
     )
 
-    return updated_orders
+    def process_order(order):
+        if order and needs_update(order):
+            return mark_completed(order)
+        return order
+
+    updated_orders = list(map(process_order, orders))
+
+    return updated_orders    
 
 
 
